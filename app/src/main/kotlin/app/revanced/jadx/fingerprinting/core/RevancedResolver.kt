@@ -88,16 +88,19 @@ class ReVancedResolver : AutoCloseable {
 
     fun searchFingerprint(matcher: ReadOnlyProperty<BytecodePatchContext, *>): Method? {
         if (!ensureInitialized()) return null
-        val context = loadContext()
         val result = runCatching {
-            matcher.getValue(context, ::matcherProbe)
+            matcher.getValue(loadContext(), ::matcherProbe)
         }.getOrElse {
             log.info { "Matcher produced no result: ${it.message}" }
             null
         }
+
+        if (result != null && result.javaClass.name.contains(".dexlib2.mutable.")) invalidateContext()
         log.info { "Search result: $result" }
         return result as? Method
     }
+
+    private fun invalidateContext() = synchronized(this) { cachedContext = null }
 
     private fun ensureInitialized(): Boolean {
         if (!::sourceApk.isInitialized || !::patcherTemporaryFilesPath.isInitialized) {

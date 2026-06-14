@@ -33,6 +33,8 @@ import kotlin.script.experimental.api.ResultWithDiagnostics
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.measureTime
 
+internal const val FINGERPRINT_PANEL_HEADER_HEIGHT = 36
+
 class FingerprintResultPanel(
     private val context: JadxPluginContext,
     private val guiContext: JadxGuiContext,
@@ -59,8 +61,9 @@ class FingerprintResultPanel(
     private val resultScrollPane: JScrollPane
 
     init {
-        val upPanel = JPanel(FlowLayout(FlowLayout.LEFT)).apply {
-            border = BorderFactory.createEmptyBorder(0, 10, 10, 0)
+        val upPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)).apply {
+            border = BorderFactory.createEmptyBorder(0, 10, 0, 0)
+            preferredSize = Dimension(0, FINGERPRINT_PANEL_HEADER_HEIGHT)
             add(runButton)
             add(clearButton)
             add(resultLabel)

@@ -7,6 +7,7 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import jadx.api.plugins.JadxPluginContext
 import jadx.api.plugins.gui.JadxGuiContext
 import java.awt.BorderLayout
+import java.awt.Dimension
 import java.awt.FlowLayout
 import javax.swing.JButton
 import javax.swing.JLabel
@@ -47,6 +48,7 @@ class TestFingerprintPanel(
         )
 
         val historyBar = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)).apply {
+            preferredSize = Dimension(0, FINGERPRINT_PANEL_HEADER_HEIGHT)
             add(JLabel("History:"))
             add(backBtn)
             add(fwdBtn)
@@ -62,10 +64,11 @@ class TestFingerprintPanel(
             dividerSize = 5
         }
         val splitPane = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, editorSplit, resultPanel).apply {
-            resizeWeight = 0.6
+            resizeWeight = 0.72
             dividerSize = 5
         }
         add(splitPane, BorderLayout.CENTER)
+        SwingUtilities.invokeLater { splitPane.setDividerLocation(0.72) }
         wireHistoryListeners()
     }
 
