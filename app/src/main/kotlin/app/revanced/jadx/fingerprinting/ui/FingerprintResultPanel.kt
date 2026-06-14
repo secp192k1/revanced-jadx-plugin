@@ -91,7 +91,7 @@ class FingerprintResultPanel(
 
         val script = scriptProvider()
         scope.launch {
-            var result: Method? = null
+            var results: List<Method> = emptyList()
             val executionTime = measureTime {
                 val evalResult = try {
                     ScriptEvaluation.rawEvaluate(script)
@@ -111,24 +111,41 @@ class FingerprintResultPanel(
                     }
                 } ?: return@launch
 
-                result = ReVancedJadxPluginUi.resolver.searchFingerprint(matcher)
+                results = ReVancedJadxPluginUi.resolver.searchAllFingerprintMatches(matcher)
             }
 
             withContext(Dispatchers.Swing) {
                 resultLabel.text = "Executed in ${executionTime.inWholeMilliseconds.milliseconds}"
-                renderResult(result)
+                renderResults(results)
             }
         }
     }
 
-    private fun renderResult(method: Method?) {
+    private fun renderResults(methods: List<Method>) {
         resultContentBox.removeAll()
-        if (method == null) {
+        if (methods.isEmpty()) {
             resultContentBox.add(ReVancedJadxPluginUi.createWrappedTextArea("Fingerprint not found in the APK.").apply {
                 alignmentX = LEFT_ALIGNMENT
             })
         } else {
-            resultContentBox.add(resultCard(method))
+            resultContentBox.add(resultCard(methods.first()))
+
+            val others = methods.drop(1)
+            if (others.isNotEmpty()) {
+                resultContentBox.add(Box.createVerticalStrut(10))
+                resultContentBox.add(JSeparator(SwingConstants.HORIZONTAL).apply {
+                    alignmentX = LEFT_ALIGNMENT
+                    maximumSize = Dimension(Int.MAX_VALUE, 2)
+                })
+                resultContentBox.add(JLabel("Other possible matches (${others.size}):").apply {
+                    alignmentX = LEFT_ALIGNMENT
+                    border = BorderFactory.createEmptyBorder(6, 4, 6, 0)
+                })
+                others.forEach { method ->
+                    resultContentBox.add(resultCard(method))
+                    resultContentBox.add(Box.createVerticalStrut(10))
+                }
+            }
         }
         setControlsEnabled(true)
         resultContentBox.revalidate()

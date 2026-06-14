@@ -16,8 +16,10 @@ import java.util.UUID
 import kotlin.properties.ReadOnlyProperty
 import app.revanced.patcher.patch.BytecodePatchContext
 import app.revanced.patcher.patcher
+import com.android.tools.smali.dexlib2.iface.ClassDef
 
 private val matcherProbe = Unit
+private const val MAX_FINGERPRINT_MATCHES = 50
 
 class ReVancedResolver : AutoCloseable {
     private val log = KotlinLogging.logger("${ReVancedJadxPlugin.ID}/resolver")
@@ -86,18 +88,42 @@ class ReVancedResolver : AutoCloseable {
             .toList()
     }
 
-    fun searchFingerprint(matcher: ReadOnlyProperty<BytecodePatchContext, *>): Method? {
-        if (!ensureInitialized()) return null
-        val result = runCatching {
-            matcher.getValue(loadContext(), ::matcherProbe)
+    fun searchAllFingerprintMatches(matcher: ReadOnlyProperty<BytecodePatchContext, *>): List<Method> {
+        if (!ensureInitialized()) return emptyList()
+        val context = loadContext()
+        val cacheField = runCatching {
+            matcher.javaClass.getDeclaredField("cache").apply { isAccessible = true }
+        }.getOrNull()
+
+        fun clearMatcherCache() = (cacheField?.get(matcher) as? MutableMap<*, *>)?.clear()
+        fun evalOnce(): Method? = runCatching {
+            clearMatcherCache()
+            matcher.getValue(context, ::matcherProbe)
         }.getOrElse {
             log.info { "Matcher produced no result: ${it.message}" }
             null
-        }
+        } as? Method
 
-        if (result != null && result.javaClass.name.contains(".dexlib2.mutable.")) invalidateContext()
-        log.info { "Search result: $result" }
-        return result as? Method
+        val matches = mutableListOf<Method>()
+        val removed = mutableListOf<ClassDef>()
+        try {
+            var budget = MAX_FINGERPRINT_MATCHES
+            while (budget-- > 0) {
+                val method = evalOnce() ?: break
+                matches += method
+                if (cacheField == null) break // cannot iterate without a clearable result cache
+                val classDef = context.classDefs[method.definingClass] ?: break
+                context.classDefs.remove(classDef)
+                removed += classDef
+            }
+        } finally {
+            removed.forEach { context.classDefs.add(it) }
+            clearMatcherCache()
+        }
+        log.info { "Found ${matches.size} match(es)" }
+        return matches.sortedWith(
+            compareBy({ it.definingClass }, { it.name }, { it.parameterTypes.joinToString(",") }),
+        )
     }
 
     private fun invalidateContext() = synchronized(this) { cachedContext = null }
