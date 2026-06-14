@@ -1,7 +1,7 @@
 package app.revanced.jadx.fingerprinting.solver
 
 import app.revanced.jadx.fingerprinting.core.getShortId
-import app.revanced.patcher.extensions.InstructionExtensions.instructionsOrNull
+import app.revanced.patcher.extensions.instructionsOrNull
 import com.android.tools.smali.dexlib2.Opcode
 import com.android.tools.smali.dexlib2.iface.Method
 import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction

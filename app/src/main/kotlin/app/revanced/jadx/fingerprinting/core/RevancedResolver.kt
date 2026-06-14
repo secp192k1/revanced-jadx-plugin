@@ -1,13 +1,7 @@
 package app.revanced.jadx.fingerprinting.core
 
 import app.revanced.jadx.fingerprinting.ReVancedJadxPlugin
-import app.revanced.patcher.Fingerprint
-import app.revanced.patcher.Patcher
-import app.revanced.patcher.PatcherConfig
-import app.revanced.patcher.PatcherContext
-import app.revanced.patcher.patch.Patch
 import app.revanced.patcher.patch.bytecodePatch
-import com.android.tools.smali.dexlib2.iface.ClassDef
 import com.android.tools.smali.dexlib2.iface.Method
 import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction
 import com.android.tools.smali.dexlib2.iface.reference.MethodReference
@@ -17,26 +11,20 @@ import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import java.io.File
-import java.lang.reflect.Field
 import java.util.UUID
+import kotlin.properties.ReadOnlyProperty
+import app.revanced.patcher.patch.BytecodePatchContext
+import app.revanced.patcher.patcher
+
+private val matcherProbe = Unit
 
 class ReVancedResolver : AutoCloseable {
     private val log = KotlinLogging.logger("${ReVancedJadxPlugin.ID}/resolver")
     private lateinit var sourceApk: File
     private lateinit var patcherTemporaryFilesPath: File
 
-    private var cachedPatcher: Patcher? = null
-    private val executablePatchesField by lazy {
-        PatcherContext::class.java.getDeclaredField("executablePatches").also { it.isAccessible = true }
-    }
-    private val allPatchesField by lazy {
-        PatcherContext::class.java.getDeclaredField("allPatches").also { it.isAccessible = true }
-    }
-    private val bytecodeContextField by lazy {
-        PatcherContext::class.java.getDeclaredField("bytecodeContext").also { it.isAccessible = true }
-    }
+    private var cachedContext: BytecodePatchContext? = null
 
     @OptIn(DelicateCoroutinesApi::class)
     fun createPatcher(
@@ -51,81 +39,72 @@ class ReVancedResolver : AutoCloseable {
         GlobalScope.launch(Dispatchers.IO) {
             ScriptEvaluation.preload()
             try {
-                log.info { "Eagerly initializing Patcher for $sourceApk" }
-                val patcher = synchronized(this@ReVancedResolver) {
-                    cachedPatcher ?: buildPatcher().also { cachedPatcher = it }
-                }
-                validateReflection()
-                val methods = extractMethodsFromPatcher(patcher)
-                log.info { "Extracted ${methods.size} methods from Patcher context" }
+                log.info { "Eagerly initializing bytecode context for $sourceApk" }
+                val context = loadContext()
+                val methods = context.classDefs.flatMap { it.methods }
+                log.info { "Extracted ${methods.size} methods from bytecode context" }
                 onMethodsLoaded(methods)
             } catch (e: Exception) {
-                log.error(e) { "Failed to eagerly initialize Patcher or extract methods" }
+                log.error(e) { "Failed to eagerly initialize bytecode context or extract methods" }
                 onError(e)
             }
         }
     }
 
     /**
-     * Forces eager initialization of all reflected [PatcherContext] fields.
-     * Converts [NoSuchFieldException] into a descriptive [IllegalStateException] so
-     * renames in the patcher API surface a clear error at init time rather than
-     * silently crashing later inside [extractMethodsFromPatcher] or [clearPatches].
+     * Loads the apk into a [BytecodePatchContext] once and caches it. The only public entry point to
+     * a context is from within a running patch, so a no-op patch captures and hands it back out.
      */
-    private fun validateReflection() {
-        try {
-            executablePatchesField; allPatchesField; bytecodeContextField
-        } catch (e: NoSuchFieldException) {
-            throw IllegalStateException(
-                "PatcherContext internal field inaccessible, patcher API may have changed.\nCheck field names in resolver.\n${e.message}",
-                e,
-            )
+    private fun loadContext(): BytecodePatchContext = synchronized(this) {
+        cachedContext ?: run {
+            var captured: BytecodePatchContext? = null
+            val capturePatch = bytecodePatch(name = "Capture bytecode context") {
+                apply { captured = this }
+            }
+            patcher(
+                apkFile = sourceApk,
+                temporaryFilesPath = patcherTemporaryFilesPath,
+                aaptBinaryPath = null,
+                frameworkFileDirectory = patcherTemporaryFilesPath.absolutePath,
+            ) { _, _ -> setOf(capturePatch) }.invoke { result ->
+                result.exception?.let { log.error(it) { "\"${result.patch}\" failed" } }
+            }
+            (captured ?: error("Patcher did not provide a BytecodePatchContext")).also { cachedContext = it }
         }
-    }
-
-    private fun buildPatcher() = Patcher(
-        PatcherConfig(
-            sourceApk,
-            patcherTemporaryFilesPath,
-            null,
-            patcherTemporaryFilesPath.absolutePath,
-        ),
-    )
-
-    private fun extractMethodsFromPatcher(patcher: Patcher): List<Method> =
-        extractClassesFromPatcher(patcher).flatMap { it.methods }
-
-    @Suppress("UNCHECKED_CAST")
-    private fun extractClassesFromPatcher(patcher: Patcher): Iterable<ClassDef> {
-        val bytecodeCtx = bytecodeContextField.get(patcher.context)
-        val classesField = findClassesField(bytecodeCtx.javaClass)
-            ?: throw NoSuchFieldException("'classes' field not found in ${bytecodeCtx.javaClass.name}")
-        return classesField.get(bytecodeCtx) as Iterable<ClassDef>
     }
 
     fun listClassTypes(): List<String> {
-        if (!::sourceApk.isInitialized || !::patcherTemporaryFilesPath.isInitialized) {
-            log.error { "Patcher not initialized; cannot list classes" }
-            return emptyList()
-        }
-        val patcher = synchronized(this) {
-            cachedPatcher ?: buildPatcher().also { cachedPatcher = it }
-        }
-        return extractClassesFromPatcher(patcher).map { it.type }.sorted()
+        if (!ensureInitialized()) return emptyList()
+        return loadContext().classDefs.map { it.type }.sorted()
     }
 
     fun findCallers(target: Method): List<Method> {
-        if (!::sourceApk.isInitialized || !::patcherTemporaryFilesPath.isInitialized) {
-            log.error { "Patcher not initialized; cannot find callers" }
-            return emptyList()
-        }
-        val patcher = synchronized(this) {
-            cachedPatcher ?: buildPatcher().also { cachedPatcher = it }
-        }
-        return extractClassesFromPatcher(patcher).asSequence()
+        if (!ensureInitialized()) return emptyList()
+        return loadContext().classDefs.asSequence()
             .flatMap { it.methods.asSequence() }
             .filter { it.referencesMethod(target) }
             .toList()
+    }
+
+    fun searchFingerprint(matcher: ReadOnlyProperty<BytecodePatchContext, *>): Method? {
+        if (!ensureInitialized()) return null
+        val context = loadContext()
+        val result = runCatching {
+            matcher.getValue(context, ::matcherProbe)
+        }.getOrElse {
+            log.info { "Matcher produced no result: ${it.message}" }
+            null
+        }
+        log.info { "Search result: $result" }
+        return result as? Method
+    }
+
+    private fun ensureInitialized(): Boolean {
+        if (!::sourceApk.isInitialized || !::patcherTemporaryFilesPath.isInitialized) {
+            log.error { "Resolver not initialized" }
+            return false
+        }
+        return true
     }
 
     private fun Method.referencesMethod(target: Method): Boolean {
@@ -136,62 +115,9 @@ class ReVancedResolver : AutoCloseable {
         }
     }
 
-    private fun findClassesField(cls: Class<*>): Field? {
-        var c: Class<*>? = cls
-        while (c != null) {
-            try { return c.getDeclaredField("classes").also { it.isAccessible = true } }
-            catch (_: NoSuchFieldException) { c = c.superclass }
-        }
-        return null
-    }
-
-    fun searchFingerprint(fingerprint: Fingerprint): Method? {
-        if (!::sourceApk.isInitialized || !::patcherTemporaryFilesPath.isInitialized) {
-            log.error { "Patcher not initialized" }
-            return null
-        }
-
-        val patcher = synchronized(this) {
-            cachedPatcher ?: run {
-                log.warn { "Patcher not yet ready; creating synchronously for $sourceApk" }
-                buildPatcher().also { cachedPatcher = it }
-            }
-        }
-
-        var searchResult: Method? = null
-
-        val tempPatch = bytecodePatch(name = "Temporary patch for searching fingerprint") {
-            execute {
-                log.info { "Inside execute" }
-                searchResult = fingerprint.originalMethodOrNull
-                log.info { "Fingerprint found: $searchResult" }
-            }
-        }
-
-        patcher += setOf(tempPatch)
-        runBlocking {
-            patcher().collect { result ->
-                val exception = result.exception
-                    ?: return@collect log.info { "\"${result.patch}\" succeeded" }
-                log.error(exception) { "\"${result.patch}\" failed:\n" }
-            }
-        }
-        clearPatches(patcher.context)
-
-        log.info { "Search result: $searchResult" }
-        return searchResult
-    }
-
-    @Suppress("UNCHECKED_CAST")
-    private fun clearPatches(context: PatcherContext) {
-        (executablePatchesField.get(context) as MutableSet<Patch<*>>).clear()
-        (allPatchesField.get(context) as MutableSet<Patch<*>>).clear()
-    }
-
     override fun close() {
         synchronized(this) {
-            cachedPatcher?.close()
-            cachedPatcher = null
+            cachedContext = null
         }
     }
 }

@@ -55,7 +55,7 @@ java {
 kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_11)
-        freeCompilerArgs = listOf("-Xcontext-receivers")
+        freeCompilerArgs = listOf("-Xcontext-parameters", "-Xskip-prerelease-check")
     }
     jvmToolchain(11)
 }

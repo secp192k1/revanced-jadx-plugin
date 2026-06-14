@@ -1,6 +1,6 @@
 package app.revanced.jadx.fingerprinting.ui
 
-import app.revanced.patcher.Fingerprint
+import app.revanced.patcher.patch.BytecodePatchContext
 import com.android.tools.smali.dexlib2.analysis.reflection.util.ReflectionUtils
 import com.android.tools.smali.dexlib2.iface.Method
 import app.revanced.jadx.fingerprinting.ReVancedJadxPlugin
@@ -26,13 +26,12 @@ import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
 import javax.swing.table.DefaultTableModel
 import javax.swing.table.TableRowSorter
+import kotlin.properties.ReadOnlyProperty
 import kotlin.script.experimental.api.EvaluationResult
 import kotlin.script.experimental.api.ResultValue
 import kotlin.script.experimental.api.ResultWithDiagnostics
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.measureTime
-
-private const val PAGE_SIZE = 10
 
 class FingerprintResultPanel(
     private val context: JadxPluginContext,
@@ -42,10 +41,6 @@ class FingerprintResultPanel(
 ) : JPanel(BorderLayout()) {
     private val log = KotlinLogging.logger("${ReVancedJadxPlugin.ID}/result-panel")
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var matchedMethods = linkedSetOf<Method>()
-    @Volatile private var cachedFingerprint: Fingerprint? = null
-    private var currentPage = 0
-    private var exhausted = false
     private val copyIcon = ReVancedJadxPluginUi.inlineSvgIcon(Icons.copy(16))
 
     private val runButton = iconButton(
@@ -56,19 +51,7 @@ class FingerprintResultPanel(
         "Clear editor",
         ReVancedJadxPluginUi.inlineSvgIcon(Icons.clear),
     )
-    private val prevPageButton = iconButton(
-        "Previous page",
-        ReVancedJadxPluginUi.inlineSvgIcon(Icons.previousArrow),
-    ).apply { isEnabled = false }
-    private val nextPageButton = iconButton(
-        "Next page / load more",
-        ReVancedJadxPluginUi.inlineSvgIcon(Icons.nextArrow),
-    ).apply { isEnabled = false }
-
     private val resultLabel = JLabel("Fingerprint result").apply {
-        border = BorderFactory.createEmptyBorder(0, 10, 0, 0)
-    }
-    private val matchCountLabel = JLabel("").apply {
         border = BorderFactory.createEmptyBorder(0, 10, 0, 0)
     }
 
@@ -77,21 +60,12 @@ class FingerprintResultPanel(
 
     init {
         val upPanel = JPanel(FlowLayout(FlowLayout.LEFT)).apply {
+            border = BorderFactory.createEmptyBorder(0, 10, 10, 0)
             add(runButton)
             add(clearButton)
             add(resultLabel)
         }
-        val downPanel = JPanel(FlowLayout(FlowLayout.LEFT)).apply {
-            add(prevPageButton)
-            add(nextPageButton)
-            add(matchCountLabel)
-        }
-        val resultHeaderPanel = JPanel(GridLayout(2, 1, 10, 10)).apply {
-            border = BorderFactory.createEmptyBorder(0, 10, 10, 0)
-            add(upPanel)
-            add(downPanel)
-        }
-        add(resultHeaderPanel, BorderLayout.NORTH)
+        add(upPanel, BorderLayout.NORTH)
 
         val resultContentPanel = JPanel(BorderLayout()).apply {
             add(resultContentBox, BorderLayout.PAGE_START)
@@ -99,29 +73,8 @@ class FingerprintResultPanel(
         resultScrollPane = JScrollPane(resultContentPanel)
         add(resultScrollPane, BorderLayout.CENTER)
 
-        runButton.addActionListener {
-            matchedMethods = linkedSetOf()
-            cachedFingerprint = null
-            currentPage = 0
-            exhausted = false
-            matchCountLabel.text = ""
-            fetchAndRender(statusText = "Evaluating…", isFirstRun = true)
-        }
+        runButton.addActionListener { fetchAndRender() }
         clearButton.addActionListener { clearAction() }
-
-        prevPageButton.addActionListener {
-            currentPage--
-            renderCurrentPage()
-        }
-        nextPageButton.addActionListener {
-            currentPage++
-            val needed = (currentPage + 1) * PAGE_SIZE
-            if (!exhausted && matchedMethods.size < needed) {
-                fetchAndRender(statusText = "Searching…", isFirstRun = false)
-            } else {
-                renderCurrentPage()
-            }
-        }
     }
 
     override fun removeNotify() {
@@ -129,103 +82,58 @@ class FingerprintResultPanel(
         scope.cancel()
     }
 
-    private fun fetchAndRender(statusText: String, isFirstRun: Boolean) {
+    private fun fetchAndRender() {
         setControlsEnabled(false)
-        showStatusText(statusText)
+        showStatusText("Evaluating…")
 
         val script = scriptProvider()
         scope.launch {
+            var result: Method? = null
             val executionTime = measureTime {
-                if (isFirstRun) {
-                    var evalResult: ResultWithDiagnostics<EvaluationResult>? = null
-                    var evalError: Throwable? = null
-                    try {
-                        evalResult = ScriptEvaluation.rawEvaluate(script)
-                    } catch (t: Throwable) {
-                        evalError = t
-                        log.error(t) { "Exception during script evaluation" }
-                    }
-
-                    if (evalError != null) {
-                        withContext(Dispatchers.Swing) {
-                            showStatusText("Evaluation failed: ${evalError.message}")
-                            setControlsEnabled(true)
-                        }
-                        return@launch
-                    }
-
-                    val fp = extractFingerprint(evalResult!!) { msg ->
-                        withContext(Dispatchers.Swing) {
-                            showStatusText(msg)
-                            setControlsEnabled(true)
-                        }
-                    }
-                    if (fp == null) return@launch
-                    cachedFingerprint = fp
-                }
-
-                val fp = cachedFingerprint
-                if (fp == null) {
+                val evalResult = try {
+                    ScriptEvaluation.rawEvaluate(script)
+                } catch (t: Throwable) {
+                    log.error(t) { "Exception during script evaluation" }
                     withContext(Dispatchers.Swing) {
-                        showStatusText("No fingerprint - please run the script first.")
+                        showStatusText("Evaluation failed: ${t.message}")
                         setControlsEnabled(true)
                     }
                     return@launch
                 }
 
-                val needed = (currentPage + 1) * PAGE_SIZE
-                while (!exhausted && matchedMethods.size < needed) {
-                    fp.ignoreSet = matchedMethods.toSet()
-                    val next = ReVancedJadxPluginUi.resolver.searchFingerprint(fp)
-                    if (next != null) matchedMethods.add(next)
-                    else exhausted = true
-                }
+                val matcher = extractMatcher(evalResult) { msg ->
+                    withContext(Dispatchers.Swing) {
+                        showStatusText(msg)
+                        setControlsEnabled(true)
+                    }
+                } ?: return@launch
+
+                result = ReVancedJadxPluginUi.resolver.searchFingerprint(matcher)
             }
 
             withContext(Dispatchers.Swing) {
                 resultLabel.text = "Executed in ${executionTime.inWholeMilliseconds.milliseconds}"
-                renderCurrentPage()
+                renderResult(result)
             }
         }
     }
 
-    private fun renderCurrentPage() {
-        val allResults = matchedMethods.toList()
-        val startIdx = currentPage * PAGE_SIZE
-        val pageSlice = allResults.drop(startIdx).take(PAGE_SIZE)
-
+    private fun renderResult(method: Method?) {
         resultContentBox.removeAll()
-
-        if (pageSlice.isEmpty()) {
-            val msg = if (allResults.isEmpty()) "Fingerprint not found in the APK." else "No more results."
-            resultContentBox.add(ReVancedJadxPluginUi.createWrappedTextArea(msg).apply {
+        if (method == null) {
+            resultContentBox.add(ReVancedJadxPluginUi.createWrappedTextArea("Fingerprint not found in the APK.").apply {
                 alignmentX = LEFT_ALIGNMENT
             })
         } else {
-            pageSlice.forEachIndexed { i, method ->
-                if (i > 0) resultContentBox.add(Box.createVerticalStrut(10))
-                resultContentBox.add(resultCard(startIdx + i + 1, method))
-            }
+            resultContentBox.add(resultCard(method))
         }
-
-        val total = allResults.size
-        val firstShown = if (total == 0) 0 else startIdx + 1
-        val lastShown = minOf(startIdx + PAGE_SIZE, total)
-        matchCountLabel.text = when {
-            total == 0 -> "No match"
-            exhausted -> "Showing $firstShown-$lastShown of $total"
-            else -> "Showing $firstShown-$lastShown of $total+"
-        }
-        prevPageButton.isEnabled = currentPage > 0
-        nextPageButton.isEnabled = !exhausted || startIdx + PAGE_SIZE < total
-
         setControlsEnabled(true)
         resultContentBox.revalidate()
         resultContentBox.repaint()
         resultScrollPane.verticalScrollBar.value = resultScrollPane.verticalScrollBar.minimum
     }
 
-    private fun resultCard(displayIndex: Int, method: Method): JComponent {
+    private fun resultCard(method: Method): JComponent {
         val dexClass = method.definingClass
         val javaName = ReflectionUtils.dexToJavaName(dexClass).replace("$", ".")
         val shortId = method.getShortId()
@@ -257,14 +165,7 @@ class FingerprintResultPanel(
             insets = Insets(1, 0, 1, 0)
         }
 
-        grid.add(JLabel("#$displayIndex").apply { font = font.deriveFont(Font.BOLD) },
-            GridBagConstraints().apply {
-                gridx = 0; gridwidth = 3; gridy = 0
-                anchor = GridBagConstraints.WEST
-                insets = Insets(0, 0, 6, 0)
-            })
-
-        var row = 1
+        var row = 0
         fun addRow(label: String, value: String) {
             grid.add(JLabel("$label:"), labelGbc.atRow(row))
             grid.add(JTextField(value).apply {
@@ -453,16 +354,13 @@ class FingerprintResultPanel(
     private fun setControlsEnabled(enabled: Boolean) {
         runButton.isEnabled = enabled
         clearButton.isEnabled = enabled
-        if (!enabled) {
-            prevPageButton.isEnabled = false
-            nextPageButton.isEnabled = false
-        }
     }
 
-    private suspend fun extractFingerprint(
+    @Suppress("UNCHECKED_CAST")
+    private suspend fun extractMatcher(
         evalResult: ResultWithDiagnostics<EvaluationResult>,
         onError: suspend (String) -> Unit,
-    ): Fingerprint? = when (evalResult) {
+    ): ReadOnlyProperty<BytecodePatchContext, *>? = when (evalResult) {
         is ResultWithDiagnostics.Failure -> {
             val msgs = buildString {
                 appendLine("Script evaluation failed:")
@@ -488,13 +386,11 @@ class FingerprintResultPanel(
             is ResultValue.Unit -> { onError("Script did not produce a value."); null }
             is ResultValue.Value -> when (val v = rv.value) {
                 null -> { onError("Script returned null."); null }
-                !is Fingerprint -> {
-                    log.error { "Actual value classloader: ${v.javaClass.classLoader}" }
-                    log.error { "Expected Fingerprint classloader: ${Fingerprint::class.java.classLoader}" }
-                    onError("Script returned unexpected type: ${rv.type}")
+                !is ReadOnlyProperty<*, *> -> {
+                    onError("Script must return a matcher (e.g. gettingFirstMethodDeclaratively { … }); got: ${rv.type}")
                     null
                 }
-                else -> v
+                else -> v as ReadOnlyProperty<BytecodePatchContext, *>
             }
         }
     }

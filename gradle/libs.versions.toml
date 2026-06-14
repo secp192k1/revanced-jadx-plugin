@@ -3,7 +3,7 @@
 # https://docs.gradle.org/current/userguide/platforms.html#sub::toml-dependencies-format
 
 [versions]
-kotlin = "2.1.20"
+kotlin = "2.3.21"
 kotlinx = "1.10.2"
 kotlinx-serialization = "1.8.1"
 shadow = "9.0.0-beta12"
@@ -12,12 +12,12 @@ kotlin-logging-jvm = "7.0.5"
 slf4j = "2.0.17"
 logback = "1.5.18"
 
-jadx = "1.5.1"
+jadx = "1.5.5"
 flatlaf = "3.6"
 rsyntaxtextarea = "3.6.0"
 autocomplete = "3.3.2"
 
-jadx-plugin-revanced-patcher = "1.1.1"
+revanced-patcher = "22.0.1"
 multidexlib2 = "3.0.3.r3"
 smali = "3.0.5"
 xpp3 = "1.1.4c"
@@ -47,7 +47,7 @@ logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "lo
 jadx-core = { module = "io.github.skylot:jadx-core", version.ref = "jadx" }
 jadx-gui = { module = "io.github.skylot:jadx-gui", version.ref = "jadx" }
 
-jadx-plugin-revanced-patcher = { module = "app.brosssh:jadx-plugin-revanced-patcher", version.ref = "jadx-plugin-revanced-patcher" }
+revanced-patcher = { module = "app.revanced:patcher", version.ref = "revanced-patcher" }
 smali = { module = "com.android.tools.smali:smali", version.ref = "smali" }
 multidexlib2 = { module = "app.revanced:multidexlib2", version.ref = "multidexlib2" }
 xpp3 = { module = "xpp3:xpp3", version.ref = "xpp3" }
@@ -59,7 +59,7 @@ junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
 [bundles]
 scripting = ["kotlin-scripting-jvm", "kotlin-scripting-common", "kotlin-scripting-jvm-host", "kotlin-scripting-dependencies"]
 logging = ["kotlin-logging-jvm", "slf4j-api", "logback-classic"]
-revanced = ["smali", "multidexlib2", "jadx-plugin-revanced-patcher"]
+revanced = ["smali", "multidexlib2", "revanced-patcher"]
 jadx = ["jadx-core", "jadx-gui"]
 
 [plugins]

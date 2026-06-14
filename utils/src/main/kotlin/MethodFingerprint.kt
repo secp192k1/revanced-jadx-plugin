@@ -1,6 +1,6 @@
 package app.revanced.utils
 
-import app.revanced.patcher.extensions.InstructionExtensions.instructionsOrNull
+import app.revanced.patcher.extensions.instructionsOrNull
 import com.android.tools.smali.dexlib2.AccessFlags
 import com.android.tools.smali.dexlib2.Opcode
 import com.android.tools.smali.dexlib2.Opcodes

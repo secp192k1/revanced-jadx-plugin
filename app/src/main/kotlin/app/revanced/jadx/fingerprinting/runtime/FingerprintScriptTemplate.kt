@@ -17,6 +17,8 @@ object FingerprintScriptCompilationConfiguration :
     ScriptCompilationConfiguration({
         defaultImports(
             "app.revanced.patcher.*",
+            "app.revanced.patcher.patch.*",
+            "app.revanced.patcher.extensions.*",
             "com.android.tools.smali.dexlib2.*",
             "com.android.tools.smali.dexlib2.iface.*",
             "com.android.tools.smali.dexlib2.iface.reference.*",
@@ -37,6 +39,8 @@ object FingerprintScriptCompilationConfiguration :
         compilerOptions.append("-Xjdk-release=1.8")
         // allow loading deps compiled with newer Kotlin (e.g. revanced-patcher built with 2.3.0)
         compilerOptions.append("-Xskip-metadata-version-check")
+        compilerOptions.append("-Xskip-prerelease-check")
+        compilerOptions.append("-Xcontext-parameters")
     }) {
     private fun readResolve(): Any = this
 }

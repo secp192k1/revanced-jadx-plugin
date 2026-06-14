@@ -23,11 +23,6 @@ configurations.findByName("implementation")?.extendsFrom(friends)
 tasks.withType<KotlinCompile>().configureEach {
     friendPaths.from(friends.incoming.artifactView { }.files)
 }
-kotlin {
-    compilerOptions {
-        freeCompilerArgs = listOf("-Xcontext-receivers")
-    }
-}
 dependencies {
     api(libs.bundles.revanced)
     implementation(libs.kotlinx.serialization.json)
@@ -35,6 +30,7 @@ dependencies {
 kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_11)
+        freeCompilerArgs = listOf("-Xskip-prerelease-check")
     }
 }
 java {

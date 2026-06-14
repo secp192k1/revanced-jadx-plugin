@@ -40,8 +40,6 @@ internal object KotlinScriptCompletions {
     )
 
     fun create(): CompletionProvider = DefaultCompletionProvider().apply {
-        tpl("fingerprint", "fingerprint { … }", "fingerprint {\n\t\${cursor}\n}")
-
         // Method lookups
         METHOD_FUNCTIONS.forEach { fn ->
             tpl(fn, "$fn { … }", "$fn {\n\t\${cursor}\n}")
@@ -61,13 +59,8 @@ internal object KotlinScriptCompletions {
         tpl("parameterTypes", "parameterTypes(\"…\", …)", "parameterTypes(\"\${cursor}\")")
         tpl("accessFlags", "accessFlags(AccessFlags.…)", "accessFlags(AccessFlags.\${cursor})")
         tpl("opcodes", "opcodes(Opcode.…)", "opcodes(Opcode.\${cursor})")
-        tpl("opcodesPattern", "opcodesPattern(\"smali …\")", "opcodesPattern(\"\"\"\n\t\${cursor}\n\"\"\")")
         tpl("strings", "strings(\"…\")", "strings(\"\${cursor}\")")
         tpl("custom", "custom { method, classDef -> … }", "custom { method, classDef ->\n\t\${cursor}\n}")
-
-        // FingerprintBuilder DSL
-        tpl("returns", "returns(\"…\") - return type", "returns(\"\${cursor}\")")
-        tpl("parameters", "parameters(\"…\") - parameter types", "parameters(\"\${cursor}\")")
     }
 
     private fun DefaultCompletionProvider.tpl(
